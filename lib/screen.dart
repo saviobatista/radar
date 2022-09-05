@@ -1,10 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:date_time_picker/date_time_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:radar/services/radar.dart';
+import 'package:radar/services/radar_service.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({Key? key}) : super(key: key);
@@ -13,14 +14,12 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-enum PlayMode { live, replay }
-
 class _MainScreenState extends State<MainScreen> {
   DateTime? data;
   bool live = true;
   DateTime? replayTime;
   DateTime lastUpdate = DateTime.now();
-  Radar radar = Radar();
+  RadarService radar = RadarService();
   List<Marker> markers = [];
   Timer? timer;
   List<String> replayBuffer = [];
@@ -28,136 +27,75 @@ class _MainScreenState extends State<MainScreen> {
   String? loading;
   bool paused = false;
   bool loaded = false;
-  PlayMode mode = PlayMode.live;
+  bool configured = false;
   late Socket socket;
+  late Socket replayController;
+  List<DropdownMenuItem<String>> dias = [
+    const DropdownMenuItem(value: '0', child: Text('Aguarde...')),
+  ];
+  String? dia;
+  String? hora;
+
+  void handleController(
+    Socket s,
+  ) {
+    replayController = s;
+    replayController.listen((data) {
+      print('COMANDO ENVIADO PELO SERVIDOR DE CONTROLE');
+      final param = jsonDecode(String.fromCharCodes(data));
+      switch (param['action']) {
+        case 'days':
+          print('Dias disponíveis');
+          List<DropdownMenuItem<String>> newDays = [];
+          for (String dia in param['days']) {
+            newDays.add(DropdownMenuItem(
+              key: Key(dia),
+              value: dia,
+              child: Text(
+                  '${dia.substring(6, 8)}/${dia.substring(4, 6)}/${dia.substring(0, 4)}'),
+            ));
+          }
+          setState(() {
+            dias = newDays;
+          });
+          break;
+        default:
+          print('Comando invalido!');
+          print(param);
+      }
+    });
+    replayController.write(jsonEncode({'action': 'days'}));
+  }
+
+  void handleControllerError(error) {
+    print('ERRO NO CONTROLLER');
+  }
 
   @override
   void initState() {
     super.initState();
-    // Ao inicializar conecta ao vivo por padrão
-    Socket.connect('10.42.17.50', 30003).then(initSocket);
-  }
-
-  void initSocket(Socket s) {
-    socket = s;
-    socket.listen((data) {
-      for (String line in String.fromCharCodes(data).trim().split('\n')) {
-        parseLine(line);
-      }
+    // Controller
+    Socket.connect('10.42.17.193', 9141)
+        .then(handleController, onError: handleControllerError);
+    // Streamer
+    Socket.connect(
+            mode == PlayMode.replay ? '10.42.17.193' : '10.42.17.50', 30003)
+        .then((Socket socket) {
+      print('connected');
+      socket.listen((data) {
+        print('listening');
+        print(String.fromCharCodes(data));
+        for (String line in String.fromCharCodes(data).trim().split('\n')) {
+          parseLine(line);
+        }
+      }).onError((e) {
+        print(e);
+      });
     });
-    // TODO: handleError no socket
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            const Text('Radar ADSB'),
-            const SizedBox(width: 20),
-            IconButton(
-              icon: Icon(mode == PlayMode.live ? Icons.live_tv : Icons.replay),
-              tooltip: mode == PlayMode.live
-                  ? 'Exibindo dados ao vivo, clique para replay'
-                  : 'Exibindo replay, clique para ao vivo',
-              onPressed: swapMode,
-            ),
-            if (mode == PlayMode.replay) ...[
-              const SizedBox(width: 50),
-              SeletorDataHora(
-                onChange: (v) =>
-                    setState(() => replayTime = DateTime.tryParse(v)),
-              ),
-              IconButton(
-                icon: Icon(paused ? Icons.pause_circle : Icons.play_circle),
-                onPressed: rePlay,
-              ),
-            ]
-          ],
-        ),
-      ),
-      body: loading != null
-          ? Center(
-              child: Text(
-                loading!,
-                style: const TextStyle(fontSize: 40.0),
-              ),
-            )
-          : FlutterMap(
-              options: MapOptions(
-                center: LatLng(-23.006653059524492, -47.13571101259729),
-                zoom: 13.0,
-              ),
-              layers: [
-                TileLayerOptions(
-                  urlTemplate:
-                      "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-                  subdomains: ['a', 'b', 'c'],
-                ),
-                MarkerLayerOptions(
-                  markers: markers,
-                ),
-                MarkerLayerOptions(
-                  markers: [
-                    Marker(
-                      // SEBSU (FINAL 15)
-                      width: 10,
-                      height: 10,
-                      point: LatLng(-22.94727778, -47.21841667),
-                      builder: (context) => const Icon(Icons.diamond),
-                    ),
-                    Marker(
-                      // ARNIV (FINAL 33)
-                      width: 10,
-                      height: 10,
-                      point: LatLng(-23.06750833, -47.05051389),
-                      builder: (context) => const Icon(Icons.diamond),
-                    ),
-                    // FINAL 33 - 4nm
-                    Marker(
-                      width: 5,
-                      height: 5,
-                      point: LatLng(-23.05729992308919, -47.064786586193726),
-                      builder: (context) =>
-                          const Icon(Icons.circle_sharp, size: 10.0),
-                    ),
-                    //
-                    Marker(
-                      width: 5,
-                      height: 5,
-                      point: LatLng(-23.04720159529468, -47.07884328257547),
-                      builder: (context) =>
-                          const Icon(Icons.circle_sharp, size: 10.0),
-                    ),
-                    //
-                    Marker(
-                      width: 5,
-                      height: 5,
-                      point: LatLng(-23.03714968709546, -47.09295682997209),
-                      builder: (context) =>
-                          const Icon(Icons.circle_sharp, size: 10.0),
-                    ),
-                    //
-                    Marker(
-                      width: 5,
-                      height: 5,
-                      point: LatLng(-23.027075069936572, -47.107036796366856),
-                      builder: (context) =>
-                          const Icon(Icons.circle_sharp, size: 10.0),
-                    ),
-                  ],
-                )
-              ],
-              nonRotatedChildren: [
-                AttributionWidget.defaultWidget(
-                  source: 'Sávio Batista',
-                  onSourceTapped: () {},
-                ),
-              ],
-            ),
-    );
-  }
+  Widget build(BuildContext context) {}
 
   void onPause() {
     if (mode == PlayMode.replay) {
@@ -167,14 +105,16 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> onPlay() async {
-    if (live) {
-      Socket socket = await Socket.connect('10.42.17.50', 30003);
-      socket.listen((data) {
-        for (String line in String.fromCharCodes(data).trim().split('\n')) {
-          parseLine(line);
-        }
-      });
-      refresh();
+    if (!configured) {
+      replayController.write(
+        jsonEncode(
+          {
+            'action': 'setup',
+            'day': dia,
+            'hour': hora,
+          },
+        ),
+      );
     } else if (loaded && paused) {
       setState(() => paused = false);
       parseReplay();
@@ -290,7 +230,9 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  void rePlay() {}
+  void rePlay() {
+    onPlay();
+  }
 }
 
 class SeletorDataHora extends StatefulWidget {
@@ -306,17 +248,11 @@ class _SeletorDataHoraState extends State<SeletorDataHora> {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 200,
-      height: 40,
+      width: 80,
+      height: 45,
       child: DateTimePicker(
         enabled: true,
-        type: DateTimePickerType.dateTimeSeparate,
-        dateMask: 'd MMM, yyyy',
-        initialValue:
-            DateTime.now().subtract(const Duration(days: 1)).toString(),
-        firstDate: DateTime(2022, 1, 1),
-        lastDate: DateTime.now().subtract(const Duration(days: 1)),
-        icon: const Icon(Icons.event),
+        type: DateTimePickerType.time,
         use24HourFormat: true,
         locale: const Locale('pt', 'BR'),
         onChanged: widget.onChange,

@@ -2,11 +2,13 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:radar/models/flight.dart';
 import 'package:radar/models/position.dart';
 
-class Radar {
+class RadarService {
   Map<String, Flight> flights = {};
   List<List<String>> aircrafts = [];
 
-  Radar() {
+  Socket live
+
+  RadarService() {
     // File('assets/aircrafts.csv').readAsLinesSync().forEach((line) {
     //   aircrafts.add(line.split(','));
     // });
