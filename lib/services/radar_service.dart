@@ -1,17 +1,128 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter_map/flutter_map.dart';
 import 'package:radar/models/flight.dart';
 import 'package:radar/models/position.dart';
 
+enum PlayMode { live, replay }
+
+enum RadarState { loading, loaded, error, paying }
+
 class RadarService {
+  final String liveIP;
+  final String replayIP;
+  final String controllerPort;
+
+  Function? onUpdate;
+  Function? daysCallback;
+
+  late Socket live;
+  late Socket replay;
+  late Socket replayController;
+
+  RadarState state = RadarState.loading;
   Map<String, Flight> flights = {};
   List<List<String>> aircrafts = [];
 
-  Socket live
+  PlayMode mode = PlayMode.live;
 
-  RadarService() {
-    // File('assets/aircrafts.csv').readAsLinesSync().forEach((line) {
-    //   aircrafts.add(line.split(','));
-    // });
+  List<String> days = [];
+
+  void swapMode() {
+    flights = {};
+    live.listen((event) {});
+    replay.listen((event) {});
+    if (mode == PlayMode.live) {
+      mode = PlayMode.replay;
+      replay.listen(parseRawData);
+    } else {
+      mode = PlayMode.live;
+      live.listen(parseRawData);
+    }
+  }
+
+  void setDaysCallback(Function(List<String>) callback) {
+    daysCallback = callback;
+  }
+
+  void setCallback(Function callback) {
+    onUpdate = callback;
+  }
+
+  RadarService({
+    required this.liveIP,
+    required this.replayIP,
+    required this.controllerPort,
+  }) {
+    Socket.connect(liveIP, 30003).then((s) {
+      live = s;
+      live.listen(parseRawData);
+    });
+    Socket.connect(replayIP, 30003).then((s) {
+      replay = s;
+      replay.listen(parseRawData);
+    });
+    Socket.connect(replayIP, int.parse(controllerPort)).then((s) {
+      replayController = s;
+      replayController.listen((data) {
+        print('COMANDO ENVIADO PELO SERVIDOR DE CONTROLE');
+        final param = jsonDecode(String.fromCharCodes(data));
+        switch (param['action']) {
+          case 'days':
+            print('Dias disponíveis');
+            // List<DropdownMenuItem<String>> newDays = [];
+            // for (String dia in param['days']) {
+            //   newDays.add(DropdownMenuItem(
+            //     key: Key(dia),
+            //     value: dia,
+            //     child: Text(
+            //         '${dia.substring(6, 8)}/${dia.substring(4, 6)}/${dia.substring(0, 4)}'),
+            //   ));
+            // }
+            // setState(() {
+            //   dias = newDays;
+            // });
+            break;
+          case 'hours':
+            // print('Horas disponíveis');
+            // List<DropdownMenuItem<String>> newHours = [];
+            // for (String hora in param['hours']) {
+            //   newHours.add(DropdownMenuItem(
+            //     key: Key(hora),
+            //     value: hora,
+            //     child: Text('${hora.substring(0, 2)}:${hora.substring(2, 4)}'),
+            //   ));
+            // }
+            // setState(() {
+            //   horas = newHours;
+            // });
+            break;
+        }
+      });
+    });
+    // Refresh every second
+    Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (onUpdate != null) {
+        onUpdate!(flights);
+      }
+    });
+  }
+
+  void setParam(String param, String value) {
+    replayController.write('$param $value');
+  }
+
+  void parseRawData(Uint8List data) {
+    final raw = String.fromCharCodes(data);
+    final lines = raw.split('\n');
+    for (final line in lines) {
+      if (line.isNotEmpty) {
+        parse(line);
+      }
+    }
   }
 
   List<Marker> get markers => flights.entries
