@@ -20,5 +20,3 @@ void main() {
     home: const MainScreen(),
   ));
 }
-
-//31/08 20:452020
