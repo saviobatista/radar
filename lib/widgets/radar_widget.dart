@@ -37,6 +37,8 @@ class _RadarWidgetState extends State<RadarWidget> {
   List<Marker> markers = [];
   Map<String, String> days = {};
   String? day;
+  String hora = '00:00';
+  String? moment;
 
   @override
   void initState() {
@@ -51,13 +53,17 @@ class _RadarWidgetState extends State<RadarWidget> {
       // Update markers every second
       // Refresh every second
       Timer.periodic(const Duration(seconds: 1), (timer) {
+        final last10minutes =
+            DateTime.now().subtract(const Duration(minutes: 10));
         setState(() {
           markers = (mode == RadarMode.live ? liveFlights : replayFlights)
               .entries
-              .where(
-                  (e) => e.value.latitude != null && e.value.latitude != null)
+              .where((e) => e.value.latitude != null && e.value.latitude != null
+                  // && e.value.date!.compareTo(last10minutes) >= 0
+                  )
               .map<Marker>((e) => e.value.marker)
               .toList();
+          hora = moment.toString();
         });
       });
     });
@@ -67,6 +73,7 @@ class _RadarWidgetState extends State<RadarWidget> {
       replay.listen((data) {
         parseRawData(data, RadarMode.replay);
       });
+      replay.writeln(jsonEncode({'action': 'days'}));
     });
   }
 
@@ -96,24 +103,35 @@ class _RadarWidgetState extends State<RadarWidget> {
           state = RadarState.paused;
         });
         break;
-      case 'loading':
-        setState(() => state = RadarState.loading);
+      case 'status':
+        switch (params['status']) {
+          case 'ready':
+          case 'paused':
+            setState(() => state = RadarState.paused);
+            break;
+          case 'playing':
+            setState(() => state = RadarState.playing);
+            break;
+          case 'loading':
+            setState(() => state = RadarState.loading);
+            break;
+        }
         break;
-      case 'playing':
-        setState(() => state = RadarState.playing);
-        break;
-      case 'paused':
-        setState(() => state = RadarState.paused);
-        break;
+      // case 'playing':
+      //   setState(() => state = RadarState.playing);
+      //   break;
+      // case 'paused':
+      //   setState(() => state = RadarState.paused);
+      //   break;
     }
   }
 
-  void parse(String line, RadarMode mode) {
+  void parse(String line, RadarMode m) {
     if (state == RadarState.swaping) return;
     // MSG,3,1,1,E49405,1,2022/06/23,00:00:10.169,2022/06/23,00:00:10.219,,19200,,,-22.90146,-47.14713,,,0,,0,0
     final List<String> data = line.split(',');
     final String icao = data[4];
-    final flights = mode == RadarMode.live ? liveFlights : replayFlights;
+    final flights = m == RadarMode.live ? liveFlights : replayFlights;
     if (!flights.keys.contains(icao)) {
       flights[icao] = Flight(icao: icao);
       final dbInfo =
@@ -125,6 +143,9 @@ class _RadarWidgetState extends State<RadarWidget> {
     }
     flights[icao]!.date =
         DateTime.parse('${data[6].replaceAll('/', '-')} ${data[7]}');
+    if (m == mode) {
+      moment = data[7].substring(0, 5);
+    }
     //EXTRA: Store gps position in history
     if (data[14].isNotEmpty &&
         data[15].isNotEmpty &&
@@ -201,7 +222,7 @@ class _RadarWidgetState extends State<RadarWidget> {
     // Field 18: Squawk	 Assigned Mode A squawk code.
     // Field 19: Alert (Squawk change)	 Flag to indicate squawk has changed.
 
-    if (mode == RadarMode.live) {
+    if (m == RadarMode.live) {
       liveFlights = flights;
     } else {
       replayFlights = flights;
@@ -215,11 +236,6 @@ class _RadarWidgetState extends State<RadarWidget> {
   }
 
   void toggleReplay() {
-    print(jsonEncode(
-      {
-        'action': state == RadarState.playing ? 'pause' : 'play',
-      },
-    ));
     replay.write(
       jsonEncode(
         {
@@ -241,6 +257,15 @@ class _RadarWidgetState extends State<RadarWidget> {
         icon: const Icon(Icons.replay),
         tooltip: 'Exibindo replay, clique para ao vivo',
       );
+  Widget get statusText => mode == RadarMode.live
+      ? SizedBox()
+      : (state == RadarState.loading
+          ? Text('Carregando...')
+          : state == RadarState.paused
+              ? Text('Pausado')
+              : state == RadarState.playing
+                  ? Text('Reproduzindo')
+                  : Text('UNKN'));
 
   // Row(
   //     children: [
@@ -366,7 +391,17 @@ class _RadarWidgetState extends State<RadarWidget> {
                         ? Icons.pause_circle
                         : Icons.play_circle),
               ),
+              SizedBox(width: 50),
+              statusText
             ],
+            Expanded(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text(hora),
+                ],
+              ),
+            ),
           ],
         ),
       ),

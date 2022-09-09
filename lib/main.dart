@@ -18,5 +18,6 @@ void main() {
       Locale('pt', 'BR'),
     ],
     home: const MainScreen(),
+    debugShowCheckedModeBanner: false,
   ));
 }

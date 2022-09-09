@@ -84,7 +84,7 @@ class Flight {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    Text('${flightlevel} -- ${speed}KT',
+                    Text('$flightlevel -- ${speed}KT',
                         style: const TextStyle(fontSize: 8.0)),
                     // Text(),
                   ],
